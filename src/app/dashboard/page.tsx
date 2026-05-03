@@ -495,8 +495,8 @@ function DashboardPageInner() {
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-8 max-md:px-5 max-md:pt-6 md:px-8 md:py-12">
       <div className="theme-card mb-8 rounded-3xl border border-white/15 bg-white/95 p-6 text-slate-900 shadow-xl max-md:mb-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
+        <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-start md:justify-between md:gap-6">
+          <div className="min-w-0 md:max-w-[min(100%,28rem)] md:pr-2">
             <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">
               Insight tracker
             </p>
@@ -505,17 +505,17 @@ function DashboardPageInner() {
               Your progress overview in a cleaner card-style layout.
             </p>
           </div>
-          <div className="flex shrink-0 gap-2">
+          <div className="flex w-full min-w-0 gap-2 md:w-auto md:shrink-0 md:flex-nowrap">
             <button
               type="button"
-              className="theme-btn-secondary inline-flex items-center justify-center rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              className="theme-btn-secondary inline-flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-2xl border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 md:flex-initial md:px-4"
               onClick={toggleTheme}
             >
               Theme: {themeMode === "light" ? "Light" : "Navy"}
             </button>
             <Link
               href="/"
-              className="theme-btn-primary inline-flex items-center justify-center rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
+              className="theme-btn-primary inline-flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-2xl bg-slate-900 px-3 py-2 text-center text-sm font-medium text-white transition hover:bg-slate-700 md:flex-initial md:px-4"
             >
               Back
             </Link>
@@ -587,9 +587,12 @@ function DashboardPageInner() {
                   {summary.daysTracked}
                 </p>
               </div>
-              <div className={`theme-card ${statCardClass}`}>
+              <div
+                className={`theme-card ${statCardClass}`}
+                title="Each habit is scored for the current day, week, month, or year—depending on how often it repeats. This shows how many of those scores hit the target in the calendar month."
+              >
                 <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
-                  Periods met
+                  Checks passed
                 </p>
                 <p className="mt-2 text-4xl font-bold tabular-nums">
                   {summary.periodsCompleted}
@@ -632,7 +635,9 @@ function DashboardPageInner() {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="text-sm text-indigo-100">Your monthly report</p>
-                      <p className="mt-1 text-2xl font-bold">{summary.periodsCompleted} periods met</p>
+                      <p className="mt-1 text-2xl font-bold">
+                        {summary.periodsCompleted} of {summary.periodsTotal} checks passed
+                      </p>
                     </div>
                     <div
                       className="grid size-20 place-items-center rounded-full bg-white/20 text-xl font-bold"

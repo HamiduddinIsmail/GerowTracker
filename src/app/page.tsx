@@ -66,6 +66,12 @@ const today = toYmd(new Date());
 
 type ToastVariant = "success" | "error" | "info";
 
+type ToastPayload = {
+  text: string;
+  variant: ToastVariant;
+  onUndo?: () => void;
+};
+
 export default function Home() {
   const [themeMode, setThemeMode] = useState<"light" | "navy">("light");
   const [email, setEmail] = useState("");
@@ -122,7 +128,8 @@ export default function Home() {
     Record<string, "dirty" | "saving" | "saved" | "error">
   >({});
   const [lastSavedAtByHabit, setLastSavedAtByHabit] = useState<Record<string, string>>({});
-  const [toast, setToast] = useState<{ text: string; variant: ToastVariant } | null>(null);
+  const [toast, setToast] = useState<ToastPayload | null>(null);
+  const [marketingHeroOpen, setMarketingHeroOpen] = useState(true);
   const [showNewHabitForm, setShowNewHabitForm] = useState(false);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [habitsInitialLoading, setHabitsInitialLoading] = useState(false);
@@ -137,6 +144,8 @@ export default function Home() {
   const [mobileFilterTouchStartY, setMobileFilterTouchStartY] = useState<number | null>(null);
   const [isOnline, setIsOnline] = useState(true);
   const autosaveInFlight = useRef(false);
+  const marketingHeroSectionRef = useRef<HTMLElement | null>(null);
+  const progressSectionRef = useRef<HTMLElement | null>(null);
   const newHabitSectionRef = useRef<HTMLElement | null>(null);
   const trackerSectionRef = useRef<HTMLElement | null>(null);
   const actionsButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -145,9 +154,33 @@ export default function Home() {
   const deleteDialogPanelRef = useRef<HTMLDivElement | null>(null);
   const deleteDialogCancelRef = useRef<HTMLButtonElement | null>(null);
 
-  const showToast = useCallback((text: string, variant: ToastVariant = "success") => {
-    setToast({ text, variant });
+  const showToast = useCallback(
+    (text: string, variant: ToastVariant = "success", onUndo?: () => void) => {
+      setToast(onUndo ? { text, variant, onUndo } : { text, variant });
+    },
+    []
+  );
+
+  const scrollToHomeSection = useCallback((el: HTMLElement | null) => {
+    queueMicrotask(() => {
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }, []);
+
+  useEffect(() => {
+    if (!userId) {
+      setMarketingHeroOpen(true);
+      return;
+    }
+    if (habitsInitialLoading) {
+      return;
+    }
+    if (habits.length === 0) {
+      setMarketingHeroOpen(true);
+    } else {
+      setMarketingHeroOpen(false);
+    }
+  }, [userId, habits.length, habitsInitialLoading]);
 
   useEffect(() => {
     const storedTheme =
@@ -223,8 +256,13 @@ export default function Home() {
     if (!toast) {
       return;
     }
-    const ms =
-      toast.variant === "error" ? 5200 : toast.variant === "info" ? 2200 : 2800;
+    const ms = toast.onUndo
+      ? 9000
+      : toast.variant === "error"
+        ? 5200
+        : toast.variant === "info"
+          ? 2200
+          : 2800;
     const timeout = window.setTimeout(() => setToast(null), ms);
     return () => window.clearTimeout(timeout);
   }, [toast]);
@@ -1070,11 +1108,17 @@ export default function Home() {
 
   return (
     <main
-      className={`mx-auto w-full max-w-5xl px-4 py-8 md:px-8 md:py-12 max-md:px-5 max-md:pt-6 ${
+      className={`mx-auto w-full max-w-5xl px-4 py-8 md:px-8 md:py-14 max-md:px-5 max-md:pt-6 ${
         userId ? "max-md:pb-[calc(14.5rem+env(safe-area-inset-bottom,0px))]" : ""
       }`}
     >
-      <section className="theme-card mb-8 rounded-3xl border border-white/15 bg-white/95 p-6 text-slate-900 shadow-xl max-md:mb-6 md:p-8">
+      <section
+        ref={marketingHeroSectionRef}
+        id="home-intro"
+        className={`theme-card rounded-3xl border border-white/15 bg-white/95 p-6 text-slate-900 shadow-xl max-md:mb-6 md:mb-12 md:p-8 ${
+          userId && !marketingHeroOpen ? "hidden" : ""
+        }`}
+      >
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
             Your progress
@@ -1146,16 +1190,108 @@ export default function Home() {
 
       {userId && (
         <>
-          <section className="theme-card mb-8 rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-500 to-violet-500 p-6 text-white shadow-xl max-md:mb-6 max-md:border-sky-200/40 max-md:from-sky-400 max-md:to-cyan-500 max-md:shadow-[0_18px_44px_-18px_rgba(14,165,233,0.38)] md:p-8">
+          {habits.length > 0 && !marketingHeroOpen && (
+            <div className="theme-card mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/95 px-4 py-3 shadow-md md:mb-10">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Personal Development Tracker
+                </p>
+                <p className="text-sm font-medium text-slate-800">
+                  Today view — open intro anytime for dashboard link and theme.
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={buttonSecondaryClass}
+                  onClick={() => setMarketingHeroOpen(true)}
+                >
+                  Show intro
+                </button>
+                <Link
+                  href="/dashboard"
+                  className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+                >
+                  Dashboard
+                </Link>
+                <button type="button" className={buttonSecondaryClass} onClick={toggleTheme}>
+                  Theme: {themeMode === "light" ? "Light" : "Navy"}
+                </button>
+                <button type="button" className={buttonSecondaryClass} onClick={() => void signOut()}>
+                  Sign out
+                </button>
+              </div>
+            </div>
+          )}
+
+          <nav
+            aria-label="Jump to section"
+            className="theme-card sticky top-2 z-30 mb-6 flex flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-slate-200/80 bg-white/90 px-2 py-2 shadow-md backdrop-blur md:mb-10 md:justify-between md:px-3"
+          >
+            <span className="hidden pl-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400 md:inline">
+              Jump
+            </span>
+            <div className="flex flex-wrap justify-center gap-1.5 md:justify-end">
+              <button
+                type="button"
+                className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-200 md:px-4 md:text-sm"
+                onClick={() => scrollToHomeSection(progressSectionRef.current)}
+              >
+                Progress
+              </button>
+              <button
+                type="button"
+                className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-200 md:px-4 md:text-sm"
+                onClick={() => scrollToHomeSection(newHabitSectionRef.current)}
+              >
+                Add habit
+              </button>
+              <button
+                type="button"
+                className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-200 md:px-4 md:text-sm"
+                onClick={() => scrollToHomeSection(trackerSectionRef.current)}
+              >
+                Tracker
+              </button>
+              <button
+                type="button"
+                className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-200 md:px-4 md:text-sm"
+                onClick={() => {
+                  if (userId && !marketingHeroOpen) {
+                    setMarketingHeroOpen(true);
+                    requestAnimationFrame(() => {
+                      requestAnimationFrame(() => {
+                        marketingHeroSectionRef.current?.scrollIntoView({
+                          behavior: "smooth",
+                          block: "start",
+                        });
+                      });
+                    });
+                    return;
+                  }
+                  scrollToHomeSection(marketingHeroSectionRef.current);
+                }}
+              >
+                Intro
+              </button>
+            </div>
+          </nav>
+
+          <div
+            ref={progressSectionRef}
+            id="home-progress"
+            className="scroll-mt-28 space-y-6 md:space-y-12"
+          >
+          <section className="theme-card mb-0 rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-500 to-violet-500 p-6 text-white shadow-xl max-md:border-sky-200/40 max-md:from-sky-400 max-md:to-cyan-500 max-md:shadow-[0_18px_44px_-18px_rgba(14,165,233,0.38)] md:p-8">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-white">This period</h2>
+                <h2 className="text-lg font-semibold text-white">This goal window</h2>
                 <p
                   className="mt-1 text-sm text-indigo-100"
                   title="Daily habits use today’s progress. Weekly, monthly, and yearly habits use totals for the current calendar week, month, or year."
                 >
                   {summary.met} of {summary.total} habits meeting their target
-                  (daily = today; week / month / year = current period total)
+                  (daily = today; week / month / year = total so far in that window)
                 </p>
               </div>
               <div className="flex items-baseline gap-1">
@@ -1173,7 +1309,7 @@ export default function Home() {
             </div>
           </section>
 
-          <section className="theme-card mb-8 rounded-3xl border border-white/15 bg-white/95 p-5 text-slate-900 shadow-xl max-md:mb-6 max-md:border-teal-100/45 max-md:bg-white/92">
+          <section className="theme-card mb-0 rounded-3xl border border-white/15 bg-white/95 p-5 text-slate-900 shadow-xl max-md:border-teal-100/45 max-md:bg-white/92 md:p-6">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
               Today scorecard
             </h3>
@@ -1194,8 +1330,18 @@ export default function Home() {
               </div>
             </div>
           </section>
+          </div>
 
-          <section ref={newHabitSectionRef} className={`mb-8 ${panelClass}`}>
+          <div
+            className="my-8 hidden h-px w-full bg-gradient-to-r from-transparent via-slate-200 to-transparent md:my-12 md:block"
+            aria-hidden
+          />
+
+          <section
+            ref={newHabitSectionRef}
+            id="home-new-habit"
+            className={`scroll-mt-28 mb-8 md:mb-12 ${panelClass}`}
+          >
             <h2 className="text-lg font-semibold">New habit</h2>
             <p className="mt-1 text-sm text-slate-500">
               Mix workouts, ibadah, and anything personal.
@@ -1533,7 +1679,7 @@ export default function Home() {
                   )}
                   <p className="text-xs leading-relaxed text-slate-500 sm:col-span-2 lg:col-span-2">
                     <span className="text-indigo-600">Tip:</span> number values
-                    add up across the period. Use the checklist to mark whether
+                    add up across that window (week, month, or year). Use the checklist to mark whether
                     you completed the habit today.
                   </p>
                 </>
@@ -1548,7 +1694,17 @@ export default function Home() {
             )}
           </section>
 
-          <section ref={trackerSectionRef} className={panelClass} tabIndex={-1}>
+          <div
+            className="my-8 hidden h-px w-full bg-gradient-to-r from-transparent via-slate-200 to-transparent md:my-12 md:block"
+            aria-hidden
+          />
+
+          <section
+            ref={trackerSectionRef}
+            id="home-tracker"
+            className={`scroll-mt-28 mb-8 md:mb-12 ${panelClass}`}
+            tabIndex={-1}
+          >
             <h2 className="text-lg font-semibold">Today&apos;s tracker</h2>
             <p className="mt-1 text-sm text-slate-500">
               Mark completion and enter today&apos;s number. Use autosave or Save all.
@@ -1733,12 +1889,28 @@ export default function Home() {
                         type="checkbox"
                         className="size-4 rounded border-slate-300 bg-white accent-indigo-600 focus:ring-indigo-200"
                         checked={rowLog.completed}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const prev = {
+                            completed: rowLog.completed,
+                            value: rowLog.value,
+                          };
+                          const nextChecked = e.target.checked;
                           patchTodayRow(habit.id, {
-                            completed: e.target.checked,
-                            value: e.target.checked ? habit.target_value : 0,
-                          })
-                        }
+                            completed: nextChecked,
+                            value: nextChecked ? habit.target_value : 0,
+                          });
+                          showToast(
+                            nextChecked
+                              ? `${habit.name}: marked done for today.`
+                              : `${habit.name}: unchecked for today.`,
+                            "success",
+                            () =>
+                              patchTodayRow(habit.id, {
+                                completed: prev.completed,
+                                value: prev.value,
+                              })
+                          );
+                        }}
                       />
                       <span className="text-sm text-slate-700">Done today</span>
                     </label>
@@ -2079,7 +2251,7 @@ export default function Home() {
           aria-live="polite"
         >
           <div
-            className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium shadow-xl ${
+            className={`flex flex-col gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium shadow-xl sm:flex-row sm:items-start sm:gap-3 ${
               toast.variant === "error"
                 ? "border-red-200 bg-red-50 text-red-800"
                 : toast.variant === "info"
@@ -2088,14 +2260,28 @@ export default function Home() {
             }`}
           >
             <p className="min-w-0 flex-1 leading-snug">{toast.text}</p>
-            <button
-              type="button"
-              className="shrink-0 rounded-lg border border-current/20 px-2 py-1 text-xs font-semibold opacity-80 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
-              aria-label="Dismiss notification"
-              onClick={() => setToast(null)}
-            >
-              Dismiss
-            </button>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 sm:justify-start">
+              {toast.onUndo ? (
+                <button
+                  type="button"
+                  className="rounded-lg border border-current/25 bg-white/70 px-2.5 py-1 text-xs font-semibold text-inherit shadow-sm hover:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
+                  onClick={() => {
+                    toast.onUndo?.();
+                    setToast(null);
+                  }}
+                >
+                  Undo
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="rounded-lg border border-current/20 px-2 py-1 text-xs font-semibold opacity-80 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
+                aria-label="Dismiss notification"
+                onClick={() => setToast(null)}
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         </div>
       )}
