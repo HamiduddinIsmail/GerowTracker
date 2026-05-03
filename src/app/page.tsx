@@ -5,6 +5,7 @@ import {
   FormEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -63,6 +64,8 @@ const weekdayOptions = [
 
 const today = toYmd(new Date());
 
+type ToastVariant = "success" | "error" | "info";
+
 export default function Home() {
   const [themeMode, setThemeMode] = useState<"light" | "navy">("light");
   const [email, setEmail] = useState("");
@@ -119,8 +122,10 @@ export default function Home() {
     Record<string, "dirty" | "saving" | "saved" | "error">
   >({});
   const [lastSavedAtByHabit, setLastSavedAtByHabit] = useState<Record<string, string>>({});
-  const [message, setMessage] = useState("");
+  const [toast, setToast] = useState<{ text: string; variant: ToastVariant } | null>(null);
   const [showNewHabitForm, setShowNewHabitForm] = useState(false);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [habitsInitialLoading, setHabitsInitialLoading] = useState(false);
   const [habitSearch, setHabitSearch] = useState("");
   const [habitCategoryFilter, setHabitCategoryFilter] = useState("all");
   const [habitStatusFilter, setHabitStatusFilter] = useState<"all" | "remaining" | "met">(
@@ -133,6 +138,16 @@ export default function Home() {
   const [isOnline, setIsOnline] = useState(true);
   const autosaveInFlight = useRef(false);
   const newHabitSectionRef = useRef<HTMLElement | null>(null);
+  const trackerSectionRef = useRef<HTMLElement | null>(null);
+  const actionsButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const returnFocusAfterDeleteRef = useRef<HTMLButtonElement | null>(null);
+  const deleteDialogOpenPrev = useRef(false);
+  const deleteDialogPanelRef = useRef<HTMLDivElement | null>(null);
+  const deleteDialogCancelRef = useRef<HTMLButtonElement | null>(null);
+
+  const showToast = useCallback((text: string, variant: ToastVariant = "success") => {
+    setToast({ text, variant });
+  }, []);
 
   useEffect(() => {
     const storedTheme =
@@ -205,12 +220,108 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (!message) {
+    if (!toast) {
       return;
     }
-    const timeout = window.setTimeout(() => setMessage(""), 2400);
+    const ms =
+      toast.variant === "error" ? 5200 : toast.variant === "info" ? 2200 : 2800;
+    const timeout = window.setTimeout(() => setToast(null), ms);
     return () => window.clearTimeout(timeout);
-  }, [message]);
+  }, [toast]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") {
+        return;
+      }
+      if (deleteConfirmHabit) {
+        setDeleteConfirmHabit(null);
+      } else if (mobileFilterOpen) {
+        setMobileFilterOpen(false);
+      } else if (openActionMenuHabitId) {
+        setOpenActionMenuHabitId(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deleteConfirmHabit, mobileFilterOpen, openActionMenuHabitId]);
+
+  useLayoutEffect(() => {
+    const isOpen = Boolean(deleteConfirmHabit);
+    if (isOpen) {
+      queueMicrotask(() => {
+        deleteDialogCancelRef.current?.focus();
+      });
+    } else if (deleteDialogOpenPrev.current) {
+      const el = returnFocusAfterDeleteRef.current;
+      queueMicrotask(() => {
+        if (el && document.body.contains(el)) {
+          el.focus();
+        } else {
+          trackerSectionRef.current?.focus();
+        }
+      });
+      returnFocusAfterDeleteRef.current = null;
+    }
+    deleteDialogOpenPrev.current = isOpen;
+  }, [deleteConfirmHabit]);
+
+  useEffect(() => {
+    if (!deleteConfirmHabit) {
+      return;
+    }
+    const panel = deleteDialogPanelRef.current;
+    if (!panel) {
+      return;
+    }
+    const focusableButtons = () =>
+      Array.from(panel.querySelectorAll<HTMLButtonElement>("button")).filter(
+        (b) => !b.disabled
+      );
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") {
+        return;
+      }
+      const list = focusableButtons();
+      if (list.length === 0) {
+        return;
+      }
+      const active = document.activeElement;
+      if (!panel.contains(active)) {
+        return;
+      }
+      const ix = list.indexOf(active as HTMLButtonElement);
+      if (ix < 0) {
+        return;
+      }
+      if (e.shiftKey) {
+        if (ix === 0) {
+          e.preventDefault();
+          list[list.length - 1]?.focus();
+        }
+      } else if (ix === list.length - 1) {
+        e.preventDefault();
+        list[0]?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [deleteConfirmHabit]);
+
+  useEffect(() => {
+    if (!openActionMenuHabitId) {
+      return;
+    }
+    const onPointer = (e: MouseEvent) => {
+      const el = e.target as HTMLElement;
+      if (el.closest("[data-habit-action-menu]")) {
+        return;
+      }
+      setOpenActionMenuHabitId(null);
+    };
+    document.addEventListener("mousedown", onPointer);
+    return () => document.removeEventListener("mousedown", onPointer);
+  }, [openActionMenuHabitId]);
 
   const loadHabitsAndLogs = useCallback(async (currentUserId: string) => {
     const { data: habitData, error: habitError } = await supabase
@@ -222,7 +333,7 @@ export default function Home() {
       .order("created_at");
 
     if (habitError) {
-      setMessage(habitError.message);
+      showToast(habitError.message, "error");
       return;
     }
 
@@ -262,7 +373,7 @@ export default function Home() {
       .order("name");
 
     if (categoryError && categoryError.code !== "42P01") {
-      setMessage(categoryError.message);
+      showToast(categoryError.message, "error");
     }
     const mergedCategories = Array.from(
       new Set([
@@ -302,7 +413,7 @@ export default function Home() {
       .lte("log_date", today);
 
     if (logError) {
-      setMessage(logError.message);
+      showToast(logError.message, "error");
       return;
     }
 
@@ -314,7 +425,7 @@ export default function Home() {
         completed: Boolean(row.completed),
       }))
     );
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     if (!userId) {
@@ -322,10 +433,14 @@ export default function Home() {
         setHabits([]);
         setLogRows([]);
       });
+      setHabitsInitialLoading(false);
       return;
     }
+    setHabitsInitialLoading(true);
     queueMicrotask(() => {
-      void loadHabitsAndLogs(userId);
+      void loadHabitsAndLogs(userId).finally(() => {
+        setHabitsInitialLoading(false);
+      });
     });
   }, [userId, loadHabitsAndLogs]);
 
@@ -451,29 +566,33 @@ export default function Home() {
   const sendMagicLink = async (event: FormEvent) => {
     event.preventDefault();
     setLoading(true);
-    setMessage("");
+    setToast(null);
     const { error } = await supabase.auth.signInWithOtp({ email });
     setLoading(false);
-    setMessage(error ? error.message : "Check your email for the login link.");
+    if (error) {
+      showToast(error.message, "error");
+    } else {
+      showToast("Check your email for the login link.", "success");
+    }
   };
 
   const signOut = async () => {
     await supabase.auth.signOut();
-    setMessage("Signed out.");
+    showToast("Signed out.", "info");
   };
 
   const addHabit = async (event: FormEvent) => {
     event.preventDefault();
     if (!userId) {
-      setMessage("Please sign in first.");
+      showToast("Please sign in first.", "error");
       return;
     }
     if (!newHabit.name.trim()) {
-      setMessage("Habit name is required.");
+      showToast("Habit name is required.", "error");
       return;
     }
     if (!newHabit.category.trim()) {
-      setMessage("Category is required.");
+      showToast("Category is required.", "error");
       return;
     }
 
@@ -505,7 +624,7 @@ export default function Home() {
     });
 
     if (error) {
-      setMessage(error.message);
+      showToast(error.message, "error");
       return;
     }
 
@@ -520,7 +639,7 @@ export default function Home() {
       weekly_target_count: 3,
       weekly_days: [1, 3, 5],
     });
-    setMessage("Habit created.");
+    showToast("Habit created.", "success");
     await loadHabitsAndLogs(userId);
   };
 
@@ -558,18 +677,18 @@ export default function Home() {
     const raw = incrementDrafts[habit.id] ?? "";
     const delta = Number(raw);
     if (!Number.isFinite(delta) || delta <= 0) {
-      setMessage("Enter a positive number in Add progress.");
+      showToast("Enter a positive number in Add progress.", "error");
       return;
     }
     const current = todayByHabit[habit.id]?.value ?? 0;
     patchTodayRow(habit.id, { value: current + delta });
     setIncrementDrafts((prev) => ({ ...prev, [habit.id]: "" }));
-    setMessage(`${habit.name}: added ${delta}.`);
+    showToast(`${habit.name}: added ${delta}.`, "success");
   };
 
   const saveProgress = useCallback(async (habit: Habit, silent = false) => {
     if (!userId) {
-      setMessage("Please sign in first.");
+      showToast("Please sign in first.", "error");
       return;
     }
     const currentLog = todayByHabit[habit.id] ?? {
@@ -594,7 +713,11 @@ export default function Home() {
     setSavingByHabit((prev) => ({ ...prev, [habit.id]: false }));
 
     if (!silent) {
-      setMessage(error ? error.message : `${habit.name} saved.`);
+      if (error) {
+        showToast(error.message, "error");
+      } else {
+        showToast(`${habit.name} saved.`, "success");
+      }
     }
     if (!error) {
       setDirtyHabits((prev) => {
@@ -614,7 +737,7 @@ export default function Home() {
     } else {
       setSaveStateByHabit((prev) => ({ ...prev, [habit.id]: "error" }));
     }
-  }, [loadHabitsAndLogs, todayByHabit, userId]);
+  }, [loadHabitsAndLogs, showToast, todayByHabit, userId]);
 
   const saveAllProgress = async () => {
     if (!userId || habits.length === 0) {
@@ -625,7 +748,7 @@ export default function Home() {
       await saveProgress(habit, true);
     }
     setSavingAll(false);
-    setMessage("All habits saved.");
+    showToast("All habits saved.", "success");
   };
 
   const startEditHabit = (habit: Habit) => {
@@ -647,7 +770,7 @@ export default function Home() {
       return;
     }
     if (!editHabitDraft.category.trim()) {
-      setMessage("Category is required.");
+      showToast("Category is required.", "error");
       return;
     }
     const { error } = await supabase
@@ -677,11 +800,11 @@ export default function Home() {
       .eq("user_id", userId);
 
     if (error) {
-      setMessage(error.message);
+      showToast(error.message, "error");
       return;
     }
     setEditingHabitId(null);
-    setMessage("Habit updated.");
+    showToast("Habit updated.", "success");
     await loadHabitsAndLogs(userId);
   };
 
@@ -695,10 +818,10 @@ export default function Home() {
       .eq("id", habitId)
       .eq("user_id", userId);
     if (error) {
-      setMessage(error.message);
+      showToast(error.message, "error");
       return;
     }
-    setMessage("Habit archived.");
+    showToast("Habit archived.", "success");
     await loadHabitsAndLogs(userId);
   };
 
@@ -712,10 +835,10 @@ export default function Home() {
       .eq("id", habitId)
       .eq("user_id", userId);
     if (error) {
-      setMessage(error.message);
+      showToast(error.message, "error");
       return;
     }
-    setMessage("Habit restored.");
+    showToast("Habit restored.", "success");
     await loadHabitsAndLogs(userId);
   };
 
@@ -729,10 +852,10 @@ export default function Home() {
       .eq("id", habitId)
       .eq("user_id", userId);
     if (error) {
-      setMessage(error.message);
+      showToast(error.message, "error");
       return;
     }
-    setMessage("Habit paused.");
+    showToast("Habit paused.", "success");
     await loadHabitsAndLogs(userId);
   };
 
@@ -746,7 +869,7 @@ export default function Home() {
 
   const applyTemplatePack = async (pack: "ibadah" | "workout") => {
     if (!userId) {
-      setMessage("Please sign in first.");
+      showToast("Please sign in first.", "error");
       return;
     }
     const ibadahTemplates = [
@@ -776,27 +899,28 @@ export default function Home() {
     }));
     const { error } = await supabase.from("habit_definitions").insert(rows);
     if (error) {
-      setMessage(error.message);
+      showToast(error.message, "error");
       return;
     }
-    setMessage(
-      `${pack === "ibadah" ? "Ibadah" : "Workout"} template pack added.`
+    showToast(
+      `${pack === "ibadah" ? "Ibadah" : "Workout"} template pack added.`,
+      "success"
     );
     await loadHabitsAndLogs(userId);
   };
 
   const addCategory = async () => {
     if (!userId) {
-      setMessage("Please sign in first.");
+      showToast("Please sign in first.", "error");
       return;
     }
     const normalized = normalizeCategoryName(newCategoryDraft);
     if (!normalized) {
-      setMessage("Category name is required.");
+      showToast("Category name is required.", "error");
       return;
     }
     if (categoryOptions.includes(normalized)) {
-      setMessage("Category already exists.");
+      showToast("Category already exists.", "error");
       return;
     }
     const { error } = await supabase.from("habit_categories").insert({
@@ -805,14 +929,14 @@ export default function Home() {
     });
     if (error) {
       if (error.code === "42P01") {
-        setMessage("Run sql/add-habit-categories.sql first.");
+        showToast("Run sql/add-habit-categories.sql first.", "error");
         return;
       }
-      setMessage(error.message);
+      showToast(error.message, "error");
       return;
     }
     setNewCategoryDraft("");
-    setMessage("Category added.");
+    showToast("Category added.", "success");
     await loadHabitsAndLogs(userId);
   };
 
@@ -822,14 +946,14 @@ export default function Home() {
     }
     const nextName = normalizeCategoryName(editingCategoryDraft);
     if (!nextName) {
-      setMessage("Category name is required.");
+      showToast("Category name is required.", "error");
       return;
     }
     if (
       nextName !== editingCategoryName &&
       categoryOptions.some((name) => name === nextName)
     ) {
-      setMessage("Category already exists.");
+      showToast("Category already exists.", "error");
       return;
     }
     const { error: categoryError } = await supabase
@@ -839,10 +963,10 @@ export default function Home() {
       .eq("name", editingCategoryName);
     if (categoryError) {
       if (categoryError.code === "42P01") {
-        setMessage("Run sql/add-habit-categories.sql first.");
+        showToast("Run sql/add-habit-categories.sql first.", "error");
         return;
       }
-      setMessage(categoryError.message);
+      showToast(categoryError.message, "error");
       return;
     }
     const { error: habitError } = await supabase
@@ -851,9 +975,9 @@ export default function Home() {
       .eq("user_id", userId)
       .eq("category", editingCategoryName);
     if (habitError) {
-      setMessage(`Category renamed, but habit sync failed: ${habitError.message}`);
+      showToast(`Category renamed, but habit sync failed: ${habitError.message}`, "error");
     } else {
-      setMessage("Category updated.");
+      showToast("Category updated.", "success");
     }
     setEditingCategoryName(null);
     setEditingCategoryDraft("");
@@ -865,12 +989,12 @@ export default function Home() {
       return;
     }
     if (categoryOptions.length <= 1) {
-      setMessage("Keep at least one category.");
+      showToast("Keep at least one category.", "error");
       return;
     }
     const inUse = [...habits, ...archivedHabits].some((habit) => habit.category === name);
     if (inUse) {
-      setMessage("This category is used by habits. Reassign habits first.");
+      showToast("This category is used by habits. Reassign habits first.", "error");
       return;
     }
     const { error } = await supabase
@@ -880,13 +1004,13 @@ export default function Home() {
       .eq("name", name);
     if (error) {
       if (error.code === "42P01") {
-        setMessage("Run sql/add-habit-categories.sql first.");
+        showToast("Run sql/add-habit-categories.sql first.", "error");
         return;
       }
-      setMessage(error.message);
+      showToast(error.message, "error");
       return;
     }
-    setMessage("Category deleted.");
+    showToast("Category deleted.", "success");
     await loadHabitsAndLogs(userId);
   };
 
@@ -920,7 +1044,12 @@ export default function Home() {
         }
       }
       autosaveInFlight.current = false;
-      setMessage("Autosaved.");
+      setToast((prev) => {
+        if (prev?.variant === "info" && prev.text === "Autosaved.") {
+          return prev;
+        }
+        return { text: "Autosaved.", variant: "info" };
+      });
     }, 900);
 
     return () => clearTimeout(timer);
@@ -940,8 +1069,12 @@ export default function Home() {
     "theme-btn-danger rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100";
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-4 py-8 md:px-8 md:py-12">
-      <section className="theme-card mb-8 rounded-3xl border border-white/15 bg-white/95 p-6 text-slate-900 shadow-xl md:p-8">
+    <main
+      className={`mx-auto w-full max-w-5xl px-4 py-8 md:px-8 md:py-12 max-md:px-5 max-md:pt-6 ${
+        userId ? "max-md:pb-[calc(14.5rem+env(safe-area-inset-bottom,0px))]" : ""
+      }`}
+    >
+      <section className="theme-card mb-8 rounded-3xl border border-white/15 bg-white/95 p-6 text-slate-900 shadow-xl max-md:mb-6 md:p-8">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
             Your progress
@@ -1013,11 +1146,14 @@ export default function Home() {
 
       {userId && (
         <>
-          <section className="theme-card mb-8 rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-500 to-violet-500 p-6 text-white shadow-xl md:p-8">
+          <section className="theme-card mb-8 rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-500 to-violet-500 p-6 text-white shadow-xl max-md:mb-6 max-md:border-sky-200/40 max-md:from-sky-400 max-md:to-cyan-500 max-md:shadow-[0_18px_44px_-18px_rgba(14,165,233,0.38)] md:p-8">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-white">This period</h2>
-                <p className="mt-1 text-sm text-indigo-100">
+                <p
+                  className="mt-1 text-sm text-indigo-100"
+                  title="Daily habits use today’s progress. Weekly, monthly, and yearly habits use totals for the current calendar week, month, or year."
+                >
                   {summary.met} of {summary.total} habits meeting their target
                   (daily = today; week / month / year = current period total)
                 </p>
@@ -1037,20 +1173,20 @@ export default function Home() {
             </div>
           </section>
 
-          <section className="theme-card mb-8 rounded-3xl border border-white/15 bg-white/95 p-5 text-slate-900 shadow-xl">
+          <section className="theme-card mb-8 rounded-3xl border border-white/15 bg-white/95 p-5 text-slate-900 shadow-xl max-md:mb-6 max-md:border-teal-100/45 max-md:bg-white/92">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
               Today scorecard
             </h3>
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
-              <div className="theme-subcard rounded-xl bg-slate-50 p-3">
+              <div className="theme-subcard rounded-xl bg-slate-50 p-3 max-md:border-emerald-100/70 max-md:bg-emerald-50/55">
                 <p className="text-[11px] uppercase tracking-wide text-slate-500">Completed</p>
                 <p className="mt-1 text-2xl font-bold text-slate-900">{todayScorecard.completed}</p>
               </div>
-              <div className="theme-subcard rounded-xl bg-slate-50 p-3">
+              <div className="theme-subcard rounded-xl bg-slate-50 p-3 max-md:border-sky-100/70 max-md:bg-sky-50/55">
                 <p className="text-[11px] uppercase tracking-wide text-slate-500">Remaining</p>
                 <p className="mt-1 text-2xl font-bold text-slate-900">{todayScorecard.remaining}</p>
               </div>
-              <div className="theme-subcard rounded-xl bg-slate-50 p-3">
+              <div className="theme-subcard rounded-xl bg-slate-50 p-3 max-md:border-violet-100/70 max-md:bg-violet-50/50">
                 <p className="text-[11px] uppercase tracking-wide text-slate-500">Next action</p>
                 <p className="mt-1 text-sm font-semibold text-indigo-600">
                   {todayScorecard.nextHabit ? `Log ${todayScorecard.nextHabit.name}` : "All done!"}
@@ -1068,7 +1204,15 @@ export default function Home() {
               <button
                 type="button"
                 className={buttonPrimaryClass}
-                onClick={() => setShowNewHabitForm((prev) => !prev)}
+                onClick={() =>
+                  setShowNewHabitForm((prev) => {
+                    const next = !prev;
+                    if (!next) {
+                      setShowCategoryManager(false);
+                    }
+                    return next;
+                  })
+                }
               >
                 {showNewHabitForm ? "Hide habit form" : "Add new habit"}
               </button>
@@ -1078,82 +1222,94 @@ export default function Home() {
                 className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
                 onSubmit={addHabit}
               >
-              <div className="theme-subcard rounded-xl border border-slate-200 bg-slate-50 p-3 sm:col-span-2 lg:col-span-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Manage categories
-                </p>
-                <div className="mt-2 flex gap-2">
-                  <input
-                    className={`w-full ${inputClass}`}
-                    placeholder="Add new category"
-                    value={newCategoryDraft}
-                    onChange={(e) => setNewCategoryDraft(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className={buttonGhostClass}
-                    onClick={() => void addCategory()}
-                  >
-                    Add category
-                  </button>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {categoryOptions.map((option) => (
-                    <div
-                      key={option}
-                      className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-1"
-                    >
-                      {editingCategoryName === option ? (
-                        <>
-                          <input
-                            className="w-28 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
-                            value={editingCategoryDraft}
-                            onChange={(e) => setEditingCategoryDraft(e.target.value)}
-                          />
-                          <button
-                            type="button"
-                            className="text-[11px] font-semibold text-emerald-300"
-                            onClick={() => void saveCategoryEdit()}
-                          >
-                            Save
-                          </button>
-                          <button
-                            type="button"
-                            className="text-[11px] font-semibold text-slate-500"
-                            onClick={() => {
-                              setEditingCategoryName(null);
-                              setEditingCategoryDraft("");
-                            }}
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <span className="text-xs text-slate-700">{option}</span>
-                          <button
-                            type="button"
-                            className="text-[11px] font-semibold text-indigo-600"
-                            onClick={() => {
-                              setEditingCategoryName(option);
-                              setEditingCategoryDraft(option);
-                            }}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="text-[11px] font-semibold text-red-600"
-                            onClick={() => void deleteCategory(option)}
-                          >
-                            Delete
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
+              <div className="sm:col-span-2 lg:col-span-4">
+                <button
+                  type="button"
+                  className={buttonSecondaryClass}
+                  aria-expanded={showCategoryManager}
+                  onClick={() => setShowCategoryManager((v) => !v)}
+                >
+                  {showCategoryManager ? "Hide" : "Manage"} categories
+                </button>
               </div>
+              {showCategoryManager && (
+                <div className="theme-subcard rounded-xl border border-slate-200 bg-slate-50 p-3 sm:col-span-2 lg:col-span-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Manage categories
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      className={`w-full ${inputClass}`}
+                      placeholder="Add new category"
+                      value={newCategoryDraft}
+                      onChange={(e) => setNewCategoryDraft(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className={buttonGhostClass}
+                      onClick={() => void addCategory()}
+                    >
+                      Add category
+                    </button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {categoryOptions.map((option) => (
+                      <div
+                        key={option}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-1"
+                      >
+                        {editingCategoryName === option ? (
+                          <>
+                            <input
+                              className="w-28 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
+                              value={editingCategoryDraft}
+                              onChange={(e) => setEditingCategoryDraft(e.target.value)}
+                            />
+                            <button
+                              type="button"
+                              className="text-[11px] font-semibold text-emerald-700"
+                              onClick={() => void saveCategoryEdit()}
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              className="text-[11px] font-semibold text-slate-500"
+                              onClick={() => {
+                                setEditingCategoryName(null);
+                                setEditingCategoryDraft("");
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-xs text-slate-700">{option}</span>
+                            <button
+                              type="button"
+                              className="text-[11px] font-semibold text-indigo-600"
+                              onClick={() => {
+                                setEditingCategoryName(option);
+                                setEditingCategoryDraft(option);
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="text-[11px] font-semibold text-red-600"
+                              onClick={() => void deleteCategory(option)}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-4">
                 <button
                   type="button"
@@ -1392,7 +1548,7 @@ export default function Home() {
             )}
           </section>
 
-          <section className={panelClass}>
+          <section ref={trackerSectionRef} className={panelClass} tabIndex={-1}>
             <h2 className="text-lg font-semibold">Today&apos;s tracker</h2>
             <p className="mt-1 text-sm text-slate-500">
               Mark completion and enter today&apos;s number. Use autosave or Save all.
@@ -1460,7 +1616,16 @@ export default function Home() {
                 </p>
               </div>
 
-              {visibleHabits.map((habit) => {
+              {habitsInitialLoading && (
+                <div className="theme-subcard space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="h-4 w-40 animate-pulse rounded bg-slate-200" />
+                  <div className="h-10 w-full animate-pulse rounded-lg bg-slate-200" />
+                  <div className="h-10 w-full animate-pulse rounded-lg bg-slate-200" />
+                </div>
+              )}
+
+              {!habitsInitialLoading &&
+                visibleHabits.map((habit) => {
                 const isPinned = pinnedHabitIds.includes(habit.id);
                 const rowLog = todayByHabit[habit.id] ?? {
                   habit_id: habit.id,
@@ -1495,20 +1660,28 @@ export default function Home() {
                         {recurrenceShortLabel(period)} · target {habit.target_value}{" "}
                         {habit.unit ?? "unit"}
                       </p>
-                      <div className="mt-2">
+                      <div className="mt-2" data-habit-action-menu>
                         <button
                           type="button"
+                          ref={(el) => {
+                            actionsButtonRefs.current[habit.id] = el;
+                          }}
                           className="min-h-10 rounded-lg border border-slate-300 px-3 py-1 text-[11px] font-semibold text-slate-700"
                           onClick={() =>
                             setOpenActionMenuHabitId((prev) =>
                               prev === habit.id ? null : habit.id
                             )
                           }
+                          aria-expanded={openActionMenuHabitId === habit.id}
+                          aria-haspopup="menu"
                         >
                           Actions
                         </button>
                         {openActionMenuHabitId === habit.id && (
-                          <div className="theme-card absolute left-0 top-full z-20 mt-2 w-40 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                          <div
+                            className="theme-card absolute left-0 top-full z-20 mt-2 w-40 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
+                            role="menu"
+                          >
                             <button
                               type="button"
                               className="w-full rounded-lg px-2 py-2 text-left text-xs text-slate-700 hover:bg-slate-100"
@@ -1543,6 +1716,8 @@ export default function Home() {
                               type="button"
                               className="w-full rounded-lg px-2 py-2 text-left text-xs text-red-700 hover:bg-red-50"
                               onClick={() => {
+                                returnFocusAfterDeleteRef.current =
+                                  actionsButtonRefs.current[habit.id] ?? null;
                                 setDeleteConfirmHabit(habit);
                                 setOpenActionMenuHabitId(null);
                               }}
@@ -1819,12 +1994,12 @@ export default function Home() {
                 );
               })}
 
-              {habits.length > 0 && filteredHabits.length === 0 && (
+              {habits.length > 0 && filteredHabits.length === 0 && !habitsInitialLoading && (
                 <p className="theme-subcard rounded-xl border border-dashed border-slate-300 bg-slate-50 py-6 text-center text-sm text-slate-500">
                   No habits match your current filters.
                 </p>
               )}
-              {hasMoreHabits && (
+              {hasMoreHabits && !habitsInitialLoading && (
                 <div className="flex justify-center">
                   <button
                     type="button"
@@ -1835,7 +2010,7 @@ export default function Home() {
                   </button>
                 </div>
               )}
-              {habits.length === 0 && (
+              {habits.length === 0 && !habitsInitialLoading && (
                 <div className="theme-subcard rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
                   <p className="text-base font-semibold text-slate-700">
                     Welcome! Let&apos;s set up your first habit.
@@ -1866,7 +2041,7 @@ export default function Home() {
           </section>
           {archivedHabits.length > 0 && (
             <section className={`mt-8 ${panelClass}`}>
-              <h2 className="text-lg font-semibold text-white">Paused / Archived habits</h2>
+              <h2 className="text-lg font-semibold text-slate-900">Paused / Archived habits</h2>
               <p className="mt-1 text-sm text-slate-500">
                 Restore habits to bring them back to your active tracker.
               </p>
@@ -1884,7 +2059,7 @@ export default function Home() {
                     </div>
                     <button
                       type="button"
-                      className="rounded-lg border border-emerald-600/60 px-3 py-1.5 text-xs font-semibold text-emerald-300"
+                      className="rounded-lg border border-emerald-600/60 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
                       onClick={() => void restoreHabit(habit.id)}
                     >
                       Restore
@@ -1897,23 +2072,54 @@ export default function Home() {
         </>
       )}
 
-      {message && (
-        <div className="pointer-events-none fixed bottom-20 right-4 z-50 md:bottom-6">
-          <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700 shadow-xl animate-pulse">
-            {message}
-          </p>
+      {toast && (
+        <div
+          className="fixed right-4 z-50 max-w-[min(100vw-2rem,22rem)] max-md:bottom-[calc(14.5rem+env(safe-area-inset-bottom,0px))] md:bottom-6"
+          role="status"
+          aria-live="polite"
+        >
+          <div
+            className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium shadow-xl ${
+              toast.variant === "error"
+                ? "border-red-200 bg-red-50 text-red-800"
+                : toast.variant === "info"
+                  ? "border-slate-200 bg-slate-50 text-slate-700"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-800"
+            }`}
+          >
+            <p className="min-w-0 flex-1 leading-snug">{toast.text}</p>
+            <button
+              type="button"
+              className="shrink-0 rounded-lg border border-current/20 px-2 py-1 text-xs font-semibold opacity-80 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
+              aria-label="Dismiss notification"
+              onClick={() => setToast(null)}
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
       {deleteConfirmHabit && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4">
-          <div className="theme-card w-full max-w-md rounded-2xl border border-red-200 bg-white p-5 shadow-2xl">
-            <h3 className="text-lg font-semibold text-slate-900">Delete habit?</h3>
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-habit-dialog-title"
+        >
+          <div
+            ref={deleteDialogPanelRef}
+            className="theme-card w-full max-w-md rounded-2xl border border-red-200 bg-white p-5 shadow-2xl"
+          >
+            <h3 id="delete-habit-dialog-title" className="text-lg font-semibold text-slate-900">
+              Delete habit?
+            </h3>
             <p className="mt-2 text-sm text-slate-600">
               This will archive <span className="font-semibold">{deleteConfirmHabit.name}</span>.
               You can keep old logs, but the habit will disappear from active tracker.
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button
+                ref={deleteDialogCancelRef}
                 type="button"
                 className={buttonSecondaryClass}
                 onClick={() => setDeleteConfirmHabit(null)}
@@ -2003,22 +2209,43 @@ export default function Home() {
         </div>
       )}
       {userId && (
-        <>
-          <div className="theme-card fixed inset-x-0 bottom-[96px] z-40 mx-3 rounded-xl border border-slate-200 bg-white/95 px-3 py-2 backdrop-blur md:hidden">
-            <p className={`text-xs font-semibold ${syncStatusClass}`}>Sync: {syncStatusText}</p>
-          </div>
-          <div className="theme-card fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 p-3 backdrop-blur md:hidden">
-            <div className="mx-auto flex max-w-5xl gap-2">
+        <div
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center max-md:px-4 md:hidden"
+          style={{
+            paddingBottom: "max(0.65rem, env(safe-area-inset-bottom, 0px))",
+          }}
+        >
+          <div
+            className={`pointer-events-auto w-full max-w-md rounded-[1.75rem] border p-3 backdrop-blur-xl ${
+              themeMode === "navy"
+                ? "border-amber-200/20 bg-[rgba(10,22,40,0.88)] shadow-[0_24px_48px_-24px_rgba(0,0,0,0.65)]"
+                : "border-sky-100/80 bg-white/80 shadow-[0_22px_50px_-20px_rgba(59,130,246,0.28),0_12px_32px_-20px_rgba(15,23,42,0.12)]"
+            }`}
+          >
+            <p
+              className={`mb-2 text-center text-[10px] font-bold uppercase tracking-[0.18em] ${syncStatusClass}`}
+            >
+              {syncStatusText}
+            </p>
+            <div className="flex gap-2">
               <button
                 type="button"
-                className="min-h-12 flex-1 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                className={`min-h-12 min-w-0 flex-1 rounded-2xl px-3 py-2.5 text-sm font-semibold shadow-md transition hover:brightness-105 active:scale-[0.98] ${
+                  themeMode === "navy"
+                    ? "bg-gradient-to-r from-amber-500 to-amber-400 text-navy-950"
+                    : "bg-gradient-to-r from-sky-500 to-indigo-500 text-white"
+                }`}
                 onClick={() => void saveAllProgress()}
               >
                 Save all
               </button>
               <button
                 type="button"
-                className="min-h-12 flex-1 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
+                className={`min-h-12 min-w-0 flex-1 rounded-2xl border px-3 py-2.5 text-sm font-semibold shadow-sm transition ${
+                  themeMode === "navy"
+                    ? "border-amber-200/35 bg-navy-800/90 text-amber-100 hover:bg-navy-800"
+                    : "border-sky-200/90 bg-white/95 text-slate-700 hover:bg-white"
+                }`}
                 onClick={() => {
                   setShowNewHabitForm(true);
                   queueMicrotask(() => {
@@ -2029,28 +2256,49 @@ export default function Home() {
                 New habit
               </button>
             </div>
-            <div className="mt-2 grid grid-cols-3 gap-2">
+            <div
+              className={`mt-2.5 flex rounded-full p-1 ring-1 ${
+                themeMode === "navy"
+                  ? "bg-navy-800/80 ring-amber-200/20"
+                  : "bg-sky-100/80 ring-sky-200/50"
+              }`}
+            >
               <button
                 type="button"
-                className="min-h-10 rounded-xl bg-slate-900 px-2 py-2 text-xs font-semibold text-white"
+                className={`min-h-10 min-w-0 flex-1 rounded-full px-2 py-2 text-xs font-semibold shadow-sm ${
+                  themeMode === "navy"
+                    ? "bg-navy-950 text-amber-200"
+                    : "bg-white text-indigo-700"
+                }`}
+                onClick={() =>
+                  trackerSectionRef.current?.scrollIntoView({ behavior: "smooth" })
+                }
               >
                 Tracker
               </button>
               <Link
                 href="/dashboard"
-                className="min-h-10 rounded-xl border border-slate-300 px-2 py-2 text-center text-xs font-semibold text-slate-700"
+                className={`flex min-h-10 min-w-0 flex-1 items-center justify-center rounded-full px-2 py-2 text-center text-xs font-semibold transition ${
+                  themeMode === "navy"
+                    ? "text-slate-400 hover:bg-navy-950/60"
+                    : "text-slate-600 hover:bg-white/70"
+                }`}
               >
                 Dashboard
               </Link>
               <Link
                 href="/dashboard?tab=history"
-                className="min-h-10 rounded-xl border border-slate-300 px-2 py-2 text-center text-xs font-semibold text-slate-700"
+                className={`flex min-h-10 min-w-0 flex-1 items-center justify-center rounded-full px-2 py-2 text-center text-xs font-semibold transition ${
+                  themeMode === "navy"
+                    ? "text-slate-400 hover:bg-navy-950/60"
+                    : "text-slate-600 hover:bg-white/70"
+                }`}
               >
                 History
               </Link>
             </div>
           </div>
-        </>
+        </div>
       )}
     </main>
   );

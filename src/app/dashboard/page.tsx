@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   buildDashboardBuckets,
@@ -19,8 +20,11 @@ import {
   type LogRow,
 } from "@/lib/recurrence";
 
-export default function DashboardPage() {
+function DashboardPageInner() {
   const dashboardTabs = ["overview", "trends", "history"] as const;
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [themeMode, setThemeMode] = useState<"light" | "navy">("light");
   const [userId, setUserId] = useState<string | null>(null);
   const [habits, setHabits] = useState<HabitWithId[]>([]);
@@ -55,15 +59,20 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const params = new URLSearchParams(window.location.search);
-    const fromQuery = params.get("tab");
+    const fromQuery = searchParams.get("tab");
     if (fromQuery === "overview" || fromQuery === "trends" || fromQuery === "history") {
       setDashboardTab(fromQuery);
     }
-  }, []);
+  }, [searchParams]);
+
+  const syncTabToUrl = useCallback(
+    (tab: (typeof dashboardTabs)[number]) => {
+      const next = new URLSearchParams(searchParams.toString());
+      next.set("tab", tab);
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
 
   const toggleTheme = () => {
     const nextTheme = themeMode === "light" ? "navy" : "light";
@@ -441,7 +450,7 @@ export default function DashboardPage() {
     };
   }, [habits, logs]);
   const statCardClass =
-    "rounded-3xl border border-white/10 bg-white/95 p-5 text-slate-900 shadow-lg";
+    "rounded-3xl border border-white/10 bg-white/95 p-5 text-slate-900 shadow-lg max-md:rounded-[1.65rem] max-md:border-sky-100/50 max-md:shadow-md";
   const hasAnyMonthlyData = summary.totalPeriods > 0;
   const hasTrendData = logs.some((row) => row.completed || Number(row.value) > 0);
   const switchTabBySwipe = (direction: "left" | "right") => {
@@ -453,17 +462,20 @@ export default function DashboardPage() {
       const nextTab = dashboardTabs[currentIndex + 1];
       setDashboardTab(nextTab);
       setPulseTab(nextTab);
+      syncTabToUrl(nextTab);
       return;
     }
     if (direction === "right" && currentIndex > 0) {
       const nextTab = dashboardTabs[currentIndex - 1];
       setDashboardTab(nextTab);
       setPulseTab(nextTab);
+      syncTabToUrl(nextTab);
     }
   };
   const activateTab = (tab: (typeof dashboardTabs)[number]) => {
     setDashboardTab(tab);
     setPulseTab(tab);
+    syncTabToUrl(tab);
   };
   const dismissSwipeHint = () => {
     setShowSwipeHint(false);
@@ -481,8 +493,8 @@ export default function DashboardPage() {
   }, [pulseTab]);
 
   return (
-    <main className="mx-auto w-full max-w-4xl px-4 py-8 md:px-8 md:py-12">
-      <div className="theme-card mb-8 rounded-3xl border border-white/15 bg-white/95 p-6 text-slate-900 shadow-xl">
+    <main className="mx-auto w-full max-w-4xl px-4 py-8 max-md:px-5 max-md:pt-6 md:px-8 md:py-12">
+      <div className="theme-card mb-8 rounded-3xl border border-white/15 bg-white/95 p-6 text-slate-900 shadow-xl max-md:mb-6">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">
@@ -519,7 +531,7 @@ export default function DashboardPage() {
 
       {userId && (
         <>
-          <div className="theme-subcard sticky top-2 z-20 mb-6 flex gap-2 rounded-2xl border border-slate-200/80 bg-white/90 p-1.5 backdrop-blur">
+          <div className="theme-subcard sticky top-2 z-20 mb-6 flex gap-1.5 rounded-2xl border border-slate-200/80 bg-white/90 p-1.5 backdrop-blur max-md:rounded-full max-md:border-sky-100/70 max-md:bg-sky-50/85 max-md:p-1 max-md:shadow-md max-md:ring-1 max-md:ring-sky-100/60">
             {[
               { id: "overview", label: "Overview" },
               { id: "trends", label: "Trends" },
@@ -528,10 +540,10 @@ export default function DashboardPage() {
               <button
                 key={tab.id}
                 type="button"
-                className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold ${
+                className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold max-md:rounded-full max-md:py-2.5 ${
                   dashboardTab === tab.id
                     ? `bg-white text-slate-900 shadow ${pulseTab === tab.id ? "tab-pulse" : ""}`
-                    : "text-slate-500"
+                    : "text-slate-500 max-md:text-slate-600"
                 }`}
                 onClick={() => {
                   activateTab(tab.id as (typeof dashboardTabs)[number]);
@@ -556,36 +568,38 @@ export default function DashboardPage() {
             </div>
           )}
 
-          <section className="mb-6 grid gap-4 md:grid-cols-3">
-            <div className="rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-500 to-violet-500 p-5 text-white shadow-lg">
-              <p className="text-xs font-medium uppercase tracking-wider text-indigo-100">
-                Completion
-              </p>
-              <p className="mt-2 text-4xl font-bold tabular-nums">
-                {summary.completionRate}
-                <span className="text-2xl text-indigo-100">%</span>
-              </p>
-            </div>
-            <div className={`theme-card ${statCardClass}`}>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
-                Tracked days
-              </p>
-              <p className="mt-2 text-4xl font-bold tabular-nums">
-                {summary.daysTracked}
-              </p>
-            </div>
-            <div className={`theme-card ${statCardClass}`}>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
-                Periods met
-              </p>
-              <p className="mt-2 text-4xl font-bold tabular-nums">
-                {summary.periodsCompleted}
-                <span className="text-lg font-semibold text-slate-400">
-                  /{summary.periodsTotal}
-                </span>
-              </p>
-            </div>
-          </section>
+          {dashboardTab === "overview" && (
+            <section className="mb-6 grid gap-4 md:grid-cols-3">
+              <div className="rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-500 to-violet-500 p-5 text-white shadow-lg">
+                <p className="text-xs font-medium uppercase tracking-wider text-indigo-100">
+                  Completion
+                </p>
+                <p className="mt-2 text-4xl font-bold tabular-nums">
+                  {summary.completionRate}
+                  <span className="text-2xl text-indigo-100">%</span>
+                </p>
+              </div>
+              <div className={`theme-card ${statCardClass}`}>
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                  Tracked days
+                </p>
+                <p className="mt-2 text-4xl font-bold tabular-nums">
+                  {summary.daysTracked}
+                </p>
+              </div>
+              <div className={`theme-card ${statCardClass}`}>
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                  Periods met
+                </p>
+                <p className="mt-2 text-4xl font-bold tabular-nums">
+                  {summary.periodsCompleted}
+                  <span className="text-lg font-semibold text-slate-400">
+                    /{summary.periodsTotal}
+                  </span>
+                </p>
+              </div>
+            </section>
+          )}
 
           <div
             key={dashboardTab}
@@ -610,8 +624,10 @@ export default function DashboardPage() {
             {dashboardTab === "overview" && (
               <>
               <section className="mb-6 rounded-3xl border border-white/15 bg-white/95 p-6 text-slate-900 shadow-xl">
-                <h2 className="text-xl font-semibold">Weekly Performance Style</h2>
-                <p className="mt-1 text-sm text-slate-500">Current month performance snapshot</p>
+                <h2 className="text-xl font-semibold">How you&apos;re doing this month</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Snapshot of habits that had activity in the current calendar month.
+                </p>
                 <div className="mt-5 rounded-3xl bg-gradient-to-r from-indigo-500 to-sky-400 p-5 text-white">
                   <div className="flex items-center justify-between gap-4">
                     <div>
@@ -747,19 +763,26 @@ export default function DashboardPage() {
                 <p className="mt-1 text-sm text-slate-500">
                   Percentage of active days per week based on any logged progress.
                 </p>
-                <div className="mt-5 grid grid-cols-8 gap-2">
-                  {weeklyTrend.map((point) => (
-                    <div key={point.label} className="flex flex-col items-center gap-2">
-                      <div className="flex h-28 w-full items-end rounded-lg bg-slate-100 px-1.5 py-1">
-                        <div
-                          className="w-full rounded-md bg-gradient-to-t from-indigo-500 to-sky-400"
-                          style={{ height: `${Math.max(8, point.percentage)}%` }}
-                          title={`${point.activeDays}/7 active days (${point.percentage}%)`}
-                        />
+                <div className="-mx-1 mt-5 overflow-x-auto pb-1 md:mx-0 md:overflow-x-visible">
+                  <div
+                    className="grid min-w-[520px] grid-cols-8 gap-2 md:min-w-0"
+                    role="img"
+                    aria-label="Weekly active-day trend for the last eight weeks"
+                  >
+                    {weeklyTrend.map((point) => (
+                      <div key={point.label} className="flex flex-col items-center gap-2">
+                        <div className="flex h-28 w-full items-end rounded-lg bg-slate-100 px-1.5 py-1">
+                          <div
+                            className="w-full rounded-md bg-gradient-to-t from-indigo-500 to-sky-400"
+                            style={{ height: `${Math.max(8, point.percentage)}%` }}
+                            aria-hidden
+                            title={`${point.activeDays}/7 active days (${point.percentage}%)`}
+                          />
+                        </div>
+                        <p className="text-[10px] font-medium text-slate-500">{point.label}</p>
                       </div>
-                      <p className="text-[10px] font-medium text-slate-500">{point.label}</p>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               </section>
 
@@ -787,28 +810,35 @@ export default function DashboardPage() {
                     ))}
                   </select>
                 </div>
-                <div className="mt-4 grid grid-cols-8 gap-2">
-                  {perHabitTrend.points.map((point) => (
-                    <div key={point.label} className="flex flex-col items-center gap-2">
-                      <div className="flex h-24 w-full items-end rounded-lg bg-slate-100 px-1.5 py-1">
-                        <div
-                          className="w-full rounded-md bg-gradient-to-t from-violet-500 to-indigo-400"
-                          style={{
-                            height: `${Math.max(
-                              6,
-                              Math.round(
-                                (point.total /
-                                  Math.max(...perHabitTrend.points.map((p) => p.total), 1)) *
-                                  100
-                              )
-                            )}%`,
-                          }}
-                          title={`${point.label}: ${point.total}`}
-                        />
+                <div className="-mx-1 mt-4 overflow-x-auto pb-1 md:mx-0 md:overflow-x-visible">
+                  <div
+                    className="grid min-w-[520px] grid-cols-8 gap-2 md:min-w-0"
+                    role="img"
+                    aria-label={`Weekly totals for ${perHabitTrend.targetHabit?.name ?? "selected habit"}`}
+                  >
+                    {perHabitTrend.points.map((point) => (
+                      <div key={point.label} className="flex flex-col items-center gap-2">
+                        <div className="flex h-24 w-full items-end rounded-lg bg-slate-100 px-1.5 py-1">
+                          <div
+                            className="w-full rounded-md bg-gradient-to-t from-violet-500 to-indigo-400"
+                            style={{
+                              height: `${Math.max(
+                                6,
+                                Math.round(
+                                  (point.total /
+                                    Math.max(...perHabitTrend.points.map((p) => p.total), 1)) *
+                                    100
+                                )
+                              )}%`,
+                            }}
+                            aria-hidden
+                            title={`${point.label}: ${point.total}`}
+                          />
+                        </div>
+                        <p className="text-[10px] font-medium text-slate-500">{point.label}</p>
                       </div>
-                      <p className="text-[10px] font-medium text-slate-500">{point.label}</p>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               </section>
 
@@ -832,21 +862,22 @@ export default function DashboardPage() {
                   <p className="mb-3 text-xs uppercase tracking-wide text-slate-500">Monthly heatmap</p>
                   <div className="grid grid-cols-7 gap-2">
                     {consistency.heatmap.map((cell) => {
-                      const intensity =
+                      const band =
                         cell.score <= 0
-                          ? "bg-slate-200"
+                          ? { bg: "bg-slate-200", text: "text-slate-600" }
                           : cell.score < 25
-                            ? "bg-indigo-200"
+                            ? { bg: "bg-indigo-200", text: "text-slate-800" }
                             : cell.score < 75
-                              ? "bg-indigo-400"
-                              : "bg-indigo-600";
+                              ? { bg: "bg-indigo-400", text: "text-white" }
+                              : { bg: "bg-indigo-600", text: "text-white" };
                       return (
                         <button
                           key={cell.date}
                           type="button"
                           onClick={() => setSelectedHeatmapDate(cell.date)}
-                          className={`flex h-8 items-center justify-center rounded-md text-[10px] font-semibold text-white transition ${intensity} ${selectedHeatmapDate === cell.date ? "ring-2 ring-slate-800 ring-offset-2 ring-offset-slate-50" : ""}`}
+                          className={`flex h-8 items-center justify-center rounded-md text-[10px] font-semibold transition ${band.bg} ${band.text} ${selectedHeatmapDate === cell.date ? "ring-2 ring-slate-800 ring-offset-2 ring-offset-slate-50" : ""}`}
                           title={`${cell.date}: ${cell.score.toFixed(0)} activity`}
+                          aria-label={`${cell.date}, activity score ${Math.round(cell.score)}`}
                         >
                           {Number(cell.date.slice(-2))}
                         </button>
@@ -900,7 +931,7 @@ export default function DashboardPage() {
             )}
 
             {dashboardTab === "history" && (
-              <section className="mt-6 rounded-3xl border border-white/15 bg-white/95 p-6 text-slate-900 shadow-xl">
+              <section className="mb-6 rounded-3xl border border-white/15 bg-white/95 p-6 text-slate-900 shadow-xl">
               <h2 className="text-xl font-semibold">Recent logs (paginated)</h2>
               <div className="mt-4 space-y-2">
                 {historyRows.map((row, idx) => {
@@ -957,5 +988,23 @@ export default function DashboardPage() {
         </p>
       )}
     </main>
+  );
+}
+
+function DashboardLoadingFallback() {
+  return (
+    <main className="mx-auto w-full max-w-4xl px-4 py-8 md:px-8 md:py-12">
+      <div className="theme-card rounded-3xl border border-white/15 bg-white/95 p-10 text-center text-sm text-slate-500 shadow-xl">
+        Loading dashboard…
+      </div>
+    </main>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<DashboardLoadingFallback />}>
+      <DashboardPageInner />
+    </Suspense>
   );
 }
